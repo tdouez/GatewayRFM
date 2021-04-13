@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+    
+<head>
+    <title>FB Gateway</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1"charset="UTF-8" />
+    <link rel="stylesheet" type="text/css" href="w3.css">
+    <script type="text/javascript" src="jquery.js"></script>
+    <script type="text/javascript" src="script.js"></script>
+    <script type="text/javascript" src="notify.js"></script>
+</head>
+  
+<body class="w3-animate-opacity">
+
+    <!-- Entete et menu -->
+    <div class="w3-card w3-blue w3-padding-small w3-center">
+         <h1>FB Gateway</h1><span id="version">v0.00</span>
+    </div>
+    <!-- Configuration -->
+    <div id="config" class="w3-margin w3-card menu">
+        <form id="form_config" class="w3-container w3-padding">
+            <div class="w3-panel w3-border"> 
+                <p>
+                    <label class="w3-text-blue"><b>Serveur MQTT</b></label>
+                    <input class="w3-input w3-border" type="text" name="url_mqtt" id="url_mqtt" maxlength="64" value="" style="width:40%;">
+                    <label class="w3-text-blue"><b>Token MQTT</b></label>
+                    <input class="w3-input w3-border" type="text" name="token_mqtt" id="token_mqtt" maxlength="32" value="" style="width:40%;">
+                    <label class="w3-text-blue"><b>Port MQTT</b></label>
+                    <input class="w3-input w3-border" type="number" name="port_mqtt" id="port_mqtt" min="1" max="65535" value="1883" style="width:40%;">
+                    <label class="w3-text-blue"><b>User MQTT</b></label>
+                    <input class="w3-input w3-border" type="text" name="user_mqtt" id="user_mqtt" maxlength="32" value="" style="width:40%;">
+                    <label class="w3-text-blue"><b>Password MQTT</b></label>
+                    <input class="w3-input w3-border" type="text" name="pwd_mqtt" id="pwd_mqtt" maxlength="32" value="" style="width:40%;">
+                </p>
+            </div>
+            <div class="w3-panel w3-green" id="p_info_config" style="display:none"><span id="t_info_config"></span></div>
+        </form>
+        <button onclick="savButton()" class="w3-btn w3-blue w3-border">Save</button> 
+    </div>
+   
+    <div class="w3-padding w3-right">
+        <i><img src="fb.svg" alt="FB" width="30"><a href="https://fumeebleue.fr" style="text-decoration: none;"> &copy Fumée Bleue 2021</a></i>
+    </div>
+
+</body>
+
+</html>
+

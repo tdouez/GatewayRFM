@@ -1,0 +1,8 @@
+{
+    "version": "",
+    "url_mqtt": "",
+    "port_mqtt": "1883",
+    "user_mqtt": "",
+    "pwd_mqtt": "",
+    "token_mqtt": ""
+  }
