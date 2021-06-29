@@ -26,6 +26,7 @@
 //  _| \_,_| _|_|_| \___| \___|   ___/ _| \___| \_,_| \___|  
 //--------------------------------------------------------------------    
 // 2021/01/01 - FB V1.00
+// 2021/06/10 - FB V1.01
 //--------------------------------------------------------------------
 #include <Arduino.h>
 #include <WiFiManager.h>
@@ -43,7 +44,7 @@
 #include <xxtea-lib.h>
 
 
-#define VERSION   "v1.0.0"
+#define VERSION   "v1.0.1"
 
 #define MY_BAUD_RATE 115200
 
@@ -70,9 +71,11 @@
 #define TRIGGER_PIN 4
 
 
-#define GATEWAY_ADDRESS 1
+#define GATEWAY_ADDRESS       1
+#define CLIENT_LINKY_ADDRESS  2
 
-#define ENTETE '$'
+#define ENTETE  '$'
+
 #define CRYPT_PASS "FumeeBleue"
 
 #define RFM_TX_POWER 20   // 5..23 dBm, 13 dBm is default
@@ -82,42 +85,45 @@
 #define MAX_BUFFER_URL  64
 #define DEFAULT_PORT_MQTT 1883
 
-#define CHILD_ID_ADSC     0
-#define CHILD_ID_VTIC     1
-#define CHILD_ID_NGTF     2
-#define CHILD_ID_LTARF    3
-#define CHILD_ID_EAST     4
-#define CHILD_ID_IRMS1    5
-#define CHILD_ID_IRMS2    6
-#define CHILD_ID_IRMS3    7
-#define CHILD_ID_URMS1    8
-#define CHILD_ID_URMS2    9
-#define CHILD_ID_URMS3    10
-#define CHILD_ID_PREF     11
-#define CHILD_ID_PCOUP    12
-#define CHILD_ID_SINSTS   13
-#define CHILD_ID_SINSTS1  14
-#define CHILD_ID_SINSTS2  15
-#define CHILD_ID_SINSTS3  16
-#define CHILD_ID_STGE     17
-#define CHILD_ID_MSG1     18
-#define CHILD_ID_NTARF    19
-#define CHILD_ID_NJOURF   20
-#define CHILD_ID_NJOURF1  21
-#define CHILD_ID_EAIT     22
-#define CHILD_ID_SINSTI   23
-#define CHILD_ID_EASF01   24
-#define CHILD_ID_EASF02   25
-#define CHILD_ID_EASF03   26
-#define CHILD_ID_EASD01   34
-#define CHILD_ID_EASD02   35
-#define CHILD_ID_EASD03   36
-#define CHILD_ID_ERQ1     38
-#define CHILD_ID_ERQ2     39
-#define CHILD_ID_ERQ3     40
-#define CHILD_ID_SINSTSmin   60
-#define CHILD_ID_SINSTSmax   61
-#define CHILD_ID_LINKY    99
+#define ETIQU_ADSC     1
+#define ETIQU_VTIC     2
+#define ETIQU_NGTF     3
+#define ETIQU_LTARF    4
+#define ETIQU_EAST     5
+#define ETIQU_IRMS1    6
+#define ETIQU_IRMS2    7
+#define ETIQU_IRMS3    8
+#define ETIQU_URMS1    9
+#define ETIQU_URMS2    10
+#define ETIQU_URMS3    11
+#define ETIQU_PREF     12
+#define ETIQU_PCOUP    13
+#define ETIQU_SINSTS   14
+#define ETIQU_SINSTS1  15
+#define ETIQU_SINSTS2  16
+#define ETIQU_SINSTS3  17
+#define ETIQU_STGE     18
+#define ETIQU_MSG1     19
+#define ETIQU_NTARF    20
+#define ETIQU_NJOURF   21
+#define ETIQU_NJOURF1  22
+#define ETIQU_EAIT     23
+#define ETIQU_SINSTI   24
+#define ETIQU_EASF01   25
+#define ETIQU_EASF02   26
+#define ETIQU_EASF03   27
+#define ETIQU_EASD01   28
+#define ETIQU_EASD02   29
+#define ETIQU_EASD03   30
+#define ETIQU_ERQ1     31
+#define ETIQU_ERQ2     32
+#define ETIQU_ERQ3     33
+
+#define ETIQU_SINSTSmin   50
+#define ETIQU_SINSTSmax   51
+#define ETIQU_STEP        90
+#define ETIQU_BOOT        91
+
 
 #define fb_width 128
 #define fb_height 64
@@ -267,6 +273,8 @@ const unsigned char radio7_bits[] PROGMEM = {
 
 
 String Etiquette;
+String Version_Linky;
+String Step;
 String Valeur;
 unsigned long Nb_rcv = 0;
 unsigned long Nb_sent = 0;
@@ -505,149 +513,157 @@ String traduction_etiquette(int etiq)
 {
 String rc;
 
+  Serial.print("traduction etiquette:");
+  Serial.print(etiq);
+  Serial.print("->");
+
   switch (etiq) {
-    case CHILD_ID_ADSC :
+    case ETIQU_ADSC :
       rc = "ADSC";
       break;
 
-    case CHILD_ID_VTIC :
+    case ETIQU_VTIC :
       rc = "VTIC";
       break;
 
-    case CHILD_ID_NGTF :
+    case ETIQU_NGTF :
       rc = "NGTF";
       break;
 
-    case CHILD_ID_LTARF :
+    case ETIQU_LTARF :
       rc = "LTARF";
       break;
 
-    case CHILD_ID_EAST:
+    case ETIQU_EAST:
       rc = "EAST";
       break;
 
-    case CHILD_ID_IRMS1:
+    case ETIQU_IRMS1:
       rc = "IRMS1";
       break;
 
-    case CHILD_ID_IRMS2:
+    case ETIQU_IRMS2:
       rc = "IRMS2";
       break;
 
-    case CHILD_ID_IRMS3:
+    case ETIQU_IRMS3:
       rc = "IRMS3";
       break;
 
-    case CHILD_ID_URMS1:
+    case ETIQU_URMS1:
       rc = "URMS1";
       break;
 
-    case CHILD_ID_URMS2:
+    case ETIQU_URMS2:
       rc = "URMS2";
       break;
 
-    case CHILD_ID_URMS3:
+    case ETIQU_URMS3:
       rc = "URMS3";
       break;
 
-    case CHILD_ID_PREF:
+    case ETIQU_PREF:
       rc = "PREF";
       break;
 
-    case CHILD_ID_PCOUP:
+    case ETIQU_PCOUP:
       rc = "PCOUP";
       break;
 
-    case CHILD_ID_SINSTS:
+    case ETIQU_SINSTS:
       rc = "SINSTS";
       break;
 
-    case CHILD_ID_SINSTSmin:
+    case ETIQU_SINSTSmin:
       rc = "SINSTSmin";
       break;
 
-    case CHILD_ID_SINSTSmax:
+    case ETIQU_SINSTSmax:
       rc = "SINSTSmax";
       break;
 
-    case CHILD_ID_SINSTS1:
+    case ETIQU_SINSTS1:
       rc = "SINSTS1";
       break;
 
-    case CHILD_ID_SINSTS2:
+    case ETIQU_SINSTS2:
       rc = "SINSTS2";
       break;
 
-    case CHILD_ID_SINSTS3:
+    case ETIQU_SINSTS3:
       rc = "SINSTS3";
       break;
 
-    case CHILD_ID_STGE:
+    case ETIQU_STGE:
       rc = "STGE";
       break;
 
-    case CHILD_ID_MSG1:
+    case ETIQU_MSG1:
       rc = "MSG1";
       break;
 
-    case CHILD_ID_NTARF:
+    case ETIQU_NTARF:
       rc = "NTARF";
       break;
 
-    case CHILD_ID_NJOURF:
+    case ETIQU_NJOURF:
       rc = "NJOURF";
       break;
 
-    case CHILD_ID_NJOURF1:
+    case ETIQU_NJOURF1:
       rc = "NJOURF1";
       break;
 
-    case CHILD_ID_EAIT:
+    case ETIQU_EAIT:
       rc = "EAIT";
       break;
 
-    case CHILD_ID_SINSTI:
+    case ETIQU_SINSTI:
       rc = "SINSTSI";
       break;
 
-    case CHILD_ID_EASF01:
+    case ETIQU_EASF01:
       rc = "EASF01";
       break;
 
-    case CHILD_ID_EASF02:
+    case ETIQU_EASF02:
       rc = "EASF02";
       break;
 
-    case CHILD_ID_EASF03:
+    case ETIQU_EASF03:
       rc = "EASF03";
       break;
 
-    case CHILD_ID_EASD01:
+    case ETIQU_EASD01:
       rc = "EASD01";
       break;
 
-    case CHILD_ID_EASD02:
+    case ETIQU_EASD02:
       rc = "EASD02";
       break;
 
-    case CHILD_ID_EASD03:
+    case ETIQU_EASD03:
       rc = "EASD03";
       break;
 
-    case CHILD_ID_ERQ1:
+    case ETIQU_ERQ1:
       rc = "ERQ1";
       break;
 
-    case CHILD_ID_ERQ2:
+    case ETIQU_ERQ2:
       rc = "ERQ2";
       break;
 
-    case CHILD_ID_ERQ3:
+    case ETIQU_ERQ3:
       rc = "ERQ3";
       break;
 
-    case CHILD_ID_LINKY:
-      rc = "LINKY";
+    case ETIQU_STEP:
+      rc = "STEP";
+      break;
+
+    case ETIQU_BOOT:
+      rc = "BOOT";
       break;
 
     default :
@@ -655,54 +671,68 @@ String rc;
       break;
   }
 
+  Serial.println(rc);
+
   return rc;
 }
 
 // ---------------------------------------------------- traitement_data
-void traitement_data(String data)
+void traitement_data(int origine, String data)
 {
 String mqtt_buffer;
 int index=1;
+int etiqu;
   
   Serial.print(F("traitement_data:"));
   Serial.println(data);
 
-  while (index > 0) {
+  while (index > 0) {  
+
     index = data.indexOf(";");
-    Etiquette = data.substring(0, index);
-    //Serial.print(Etiquette);
-    //Serial.print(F("->"));
+    if (index > 0) {
+      // Recherche etiquette ---------
+      etiqu = data.substring(0, index).toInt();
+      Serial.print(etiqu);
+      Serial.print(F("->"));
 
-    data = data.substring(index+1);
-    index = data.indexOf(";");
-    Valeur = data.substring(0, index);
-    //Serial.println(Valeur);  
-
-    data = data.substring(index+1);
-    index = data.indexOf(";");
-
-    Etiquette = traduction_etiquette(Etiquette.toInt());
-
-    // SINSTS
-    if (Etiquette == "SINSTS") SINSTS=Valeur.toInt();
-
-    // Verif boot linky ----
-    if (Etiquette == "LINKY" && Valeur == "0") nb_boot_linky++;
-
-    else {
-      // MQTT send --------------       
-      if (mqttactive == true && mqttconnected == true) {
-        mqtt_buffer = token_mqtt + String("/") + Etiquette;
-        Serial.print(F("Send mqtt:"));
-        Serial.print(mqtt_buffer);
-        Serial.print("/");
+      // Recherche valeur -------------
+      data = data.substring(index+1);
+      index = data.indexOf(";");
+      if (index > 0) {
+        Valeur = data.substring(0, index);
         Serial.println(Valeur);
-        //client_mqtt.publish(mqtt_buffer.c_str(), Valeur.c_str(), true); 
-        client_mqtt.publish(mqtt_buffer.c_str(), Valeur.c_str());
-        Nb_sent++;
+
+        data = data.substring(index+1);
+        index = data.indexOf(";");
+
+        Etiquette = traduction_etiquette(etiqu);
+
+        // Recup valeur SINSTS pour affichage
+        if (Etiquette == "SINSTS") SINSTS=Valeur.toInt();
+
+        // Verif boot linky ----
+        if (Etiquette == "BOOT") {
+          nb_boot_linky++;
+          Version_Linky = Valeur;
+        }
+        // Recup Step ----
+        if (Etiquette == "STEP") {
+          Step = Valeur;
+        }
+
+        // MQTT send --------------       
+        if (mqttactive == true && mqttconnected == true) {
+          mqtt_buffer = token_mqtt + String("/") + Etiquette;
+          Serial.print(F("Send mqtt:"));
+          Serial.print(mqtt_buffer);
+          Serial.print("/");
+          Serial.println(Valeur);
+          //client_mqtt.publish(mqtt_buffer.c_str(), Valeur.c_str(), true); 
+          client_mqtt.publish(mqtt_buffer.c_str(), Valeur.c_str());
+          Nb_sent++;
+        }
       }
     }
-    
     lastTime_display = millis();
   } 
 }
@@ -710,9 +740,9 @@ int index=1;
 // ---------------------------------------------------- onReceive
 void onReceive(int packetSize) {
 String read_buffer;
-int index;
 int origine;
 int destinataire;
+int index;
  
     
   if (packetSize) {
@@ -724,32 +754,34 @@ int destinataire;
 
     // Test entête présente -----------
     if (read_buffer.charAt(0) == ENTETE) {
-
+      index = 0;
+      // Recherche origine ----------------
+      read_buffer = read_buffer.substring(index+1);
       index = read_buffer.indexOf(";");
       if (index > 0) {
-        // Recherche origine ----------------
         origine = read_buffer.substring(0, index).toInt();
-        //Serial.println(origine);
+        Serial.print("Origine:");
+        Serial.println(origine);
+
+        // Recherche destinataire ----------------
         read_buffer = read_buffer.substring(index+1);
         index = read_buffer.indexOf(";");
-
         if (index > 0) {
-          // Recherche destinataire ----------------
           destinataire = read_buffer.substring(0, index).toInt();
-          //Serial.println(destinataire);
-          
+          Serial.print("Dest:");
+          Serial.println(destinataire);
+
           if (destinataire == GATEWAY_ADDRESS) { // est-ce pour moi ?
             Nb_rcv++;
             read_buffer = read_buffer.substring(index+1);
             //Serial.println(read_buffer);    
             // Decode données -----------------
             read_buffer = xxtea.decrypt(read_buffer);
-            if (read_buffer != "-FAIL-") traitement_data(read_buffer);
+            if (read_buffer != "-FAIL-") traitement_data(origine, read_buffer);
               else nb_decode_failed++;
-
           } // destinataire
-        } // index
-      } // index
+        }
+      }
     } // read_buffer
   } // packetSize
 }
@@ -769,6 +801,11 @@ String strJson = "{\n";
   // boot_linky ---------------------
   strJson += F("\"boot_linky\": \"");
   strJson += nb_boot_linky;
+  strJson += F("\",\n");
+
+  // Version Linky ---------------------
+  strJson += F("\"Version Linky\": \"");
+  strJson += Version_Linky;
   strJson += F("\",\n");
 
   // lora_rssi ---------------------
@@ -792,13 +829,13 @@ String strJson = "{\n";
   strJson += F("\",\n");
 
   // Etiquette ---------------------
-  strJson += F("\"Etiquette\": \"");
+  strJson += F("\"etiquette\": \"");
   strJson += Etiquette;
   strJson += F("\",\n");
 
-  // Valeur ---------------------
-  strJson += F("\"Valeur\": \"");
-  strJson += Valeur;
+  // Step ---------------------
+  strJson += F("\"step\": \"");
+  strJson += Step;
   strJson += F("\",\n");
 
   // info_config ---------------------
@@ -1009,6 +1046,7 @@ void setup()
   }
   else {
     LoRa.enableCrc();
+    LoRa.setTxPower(RFM_TX_POWER);
     Serial.println("OK.");
   }
 
@@ -1050,8 +1088,8 @@ void loop()
     display.setFont(ArialMT_Plain_10);
     display.setTextAlignment(TEXT_ALIGN_LEFT);
     display.drawString(1, 1, WiFi.localIP().toString());
-    display.drawString(1, 15, String(Nb_rcv));
-    
+    display.drawString(2, 15, String(Nb_rcv) + "/" + String(Nb_sent));
+        
     draw_rssi();
 
     display.display();
