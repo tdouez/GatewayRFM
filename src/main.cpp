@@ -27,12 +27,16 @@
 //--------------------------------------------------------------------    
 // 2021/01/01 - FB V1.00
 // 2021/06/10 - FB V1.01
+// 2021/08/09 - FB V1.02 - Add POST request
+// 2021/08/30 - FB V1.03 - Update POST request
+// 2021/09/01 - FB V1.04 - Add OTA and module name
 //--------------------------------------------------------------------
 #include <Arduino.h>
 #include <WiFiManager.h>
 #include <WiFiClient.h>
 //#include <WiFiClientSecure.h>
 #include <ESPAsyncWebServer.h>
+#include <ArduinoHttpClient.h>
 #include <SPI.h>
 #include <LoRa.h>
 #include <ArduinoJson.h> 
@@ -42,9 +46,10 @@
 #include <SPIFFS.h>
 #define MAX_XXTEA_DATA8  200
 #include <xxtea-lib.h>
+#include <ArduinoOTA.h>
 
 
-#define VERSION   "v1.0.1"
+#define VERSION   "v1.0.4"
 
 #define MY_BAUD_RATE 115200
 
@@ -77,6 +82,7 @@
 #define ENTETE  '$'
 
 #define CRYPT_PASS "FumeeBleue"
+#define PWD_OTA    "fumeebleue"
 
 #define RFM_TX_POWER 20   // 5..23 dBm, 13 dBm is default
 
@@ -283,11 +289,14 @@ uint32_t SEND_FREQUENCY_DISPLAY = 1000; // Minimum time between send (in millise
 uint32_t lastTime_display = 0;
 bool shouldSaveConfig = false;
 bool mqttactive = false;
+bool postactive = false;
 bool mqttconnected = false;
 bool first_start = true;
 const int RSSI_MAX =-50;          // define maximum strength of signal in dBm
 const int RSSI_MIN =-100;         // define minimum strength of signal in dBm
 
+char module_name[MAX_BUFFER];
+char memo_module_name[MAX_BUFFER];
 char url_mqtt[MAX_BUFFER_URL];
 char memo_url_mqtt[MAX_BUFFER_URL];
 unsigned int port_mqtt;
@@ -298,14 +307,56 @@ char pwd_mqtt[MAX_BUFFER];
 char memo_pwd_mqtt[MAX_BUFFER];
 char token_mqtt[MAX_BUFFER];
 char memo_token_mqtt[MAX_BUFFER];
+char url_post[MAX_BUFFER];
+char memo_url_post[MAX_BUFFER];
+char token_post[MAX_BUFFER];
+char memo_token_post[MAX_BUFFER];
 int lora_rssi=0;
 unsigned int nb_boot_linky=0;
 unsigned int nb_decode_failed=0;
-
-unsigned int SINSTS=0;
-
+int httpCode=0;
+char buffer[64]; 
 
 String info_config = "";
+
+struct teleinfo_s {
+  String _ADSC = "";  // Adresse Compteur
+  String VTIC = "";    
+  String NGTF="";
+  String LTARF="";  // Libelle tarif
+  unsigned long EAST=0; // Energie active soutiree totale
+  unsigned long EAIT=0; // Energie active injectee
+  unsigned int IRMS1=0; // Courant efficace, phase 1
+  unsigned int IRMS2=0; // Courant efficace, phase 2
+  unsigned int IRMS3=0; // Courant efficace, phase 3
+  unsigned int URMS1=0; // Tension efficace, phase 1
+  unsigned int URMS2=0; // Tension efficace, phase 2
+  unsigned int URMS3=0; // Tension efficace, phase 3
+  unsigned int PREF=0;
+  unsigned int PCOUP=0; // Puissance coupure
+  unsigned int SINSTS=0; // Puissance apparente
+  unsigned int SINSTSmin=0;
+  unsigned int SINSTSmax=0;
+  unsigned int SINSTS1=0; // Puissance apparente phase 1
+  unsigned int SINSTS2=0; // Puissance apparente phase 2
+  unsigned int SINSTS3=0; // Puissance apparente phase 3
+  unsigned int SINSTI=0; // Puissance apparente injectee
+  String STGE=""; // Registre de Statuts
+  String MSG1="";
+  String NTARF=""; // Index tarifaire en cours
+  String NJOURF=""; //Jour en cours
+  String NJOURF1=""; // Prochain jour
+  unsigned long EASF01=0;
+  unsigned long EASF02=0;
+  unsigned long EASF03=0;
+  unsigned long EASD01=0;
+  unsigned long EASD02=0;
+  unsigned long EASD03=0;
+  unsigned long ERQ1=0; // Energie reactive Q1 totale
+  unsigned long ERQ2=0; // Energie reactive Q2 totale
+  unsigned long ERQ3=0; // Energie reactive Q3 totale
+  unsigned long ERQ4=0; // Energie reactive Q4 totale
+} teleinfo; 
 
 DynamicJsonDocument jsonDocModule(1024);
 
@@ -333,6 +384,13 @@ void loadConfig() {
       Serial.println(F("Contenu:"));
       serializeJson(json, Serial);
   
+      if (json["module_name"].isNull() == false) {
+        strcpy(module_name, json["module_name"]);
+        if (module_name[0] == 0) sprintf(module_name, "EMT_%06X", ESP.getChipCores());
+        strcpy(memo_module_name, module_name);
+      } 
+      else sprintf(module_name, "EMT_%06X", ESP.getChipCores());
+
       if (json["url_mqtt"].isNull() == false) {
         strcpy(url_mqtt, json["url_mqtt"]);
         strcpy(memo_url_mqtt, json["url_mqtt"]);
@@ -363,6 +421,18 @@ void loadConfig() {
         memo_port_mqtt = port_mqtt;
       }
       else port_mqtt = DEFAULT_PORT_MQTT;
+
+      if (json["url_post"].isNull() == false) {
+        strcpy(url_post, json["url_post"]);
+        strcpy(memo_url_post, json["url_post"]);
+      }
+      else url_post[0] = 0;
+
+      if (json["token_post"].isNull() == false) {
+        strcpy(token_post, json["token_post"]);
+        strcpy(memo_token_post, json["token_post"]);
+      }
+      else token_post[0] = 0;
       
       configFile.close();
     }
@@ -381,12 +451,14 @@ void saveConfig() {
   DynamicJsonDocument jsonDoc(512);
   JsonObject json = jsonDoc.to<JsonObject>();
 
-  json["version"] = VERSION;
+  json["module_name"] = module_name;
   json["url_mqtt"] = url_mqtt;
   json["user_mqtt"] = user_mqtt;
   json["pwd_mqtt"] = pwd_mqtt;
   json["token_mqtt"] = token_mqtt;
   json["port_mqtt"] = port_mqtt;
+  json["url_post"] = url_post;
+  json["token_post"] = token_post;
 
   serializeJson(json, configFile);
   configFile.close();
@@ -470,6 +542,8 @@ void draw_rssi() {
 
 // ---------------------------------------------------- reconnect_mqtt
 void reconnect_mqtt() {
+  int nb_cnx = 0;
+
   // Loop until we're reconnected
   while (!client_mqtt.connected()) {
     Serial.print("Attempting MQTT connection...");
@@ -481,13 +555,12 @@ void reconnect_mqtt() {
         info_config = "MQTT connecté";
         mqttconnected = true;
       } else {
+        nb_cnx++;
         Serial.print("failed, rc=");
         Serial.print(client_mqtt.state());
-        info_config = "Pb cnx mqtt:" + String(client_mqtt.state());
-        display.setTextAlignment(TEXT_ALIGN_CENTER);
-        display.drawString(64, 45, info_config);
-        display.display();
+        info_config = "Pb cnx mqtt:" + String(client_mqtt.state()) + " " + String(nb_cnx);
         mqttconnected = false;
+        delay(5000);
       }
     }
     else {
@@ -496,20 +569,19 @@ void reconnect_mqtt() {
         info_config = "MQTT connecté";
         mqttconnected = true;
       } else {
+        nb_cnx++;
         Serial.print("failed, rc=");
         Serial.print(client_mqtt.state());
-        info_config = "Pb cnx mqtt:" + String(client_mqtt.state());
-        display.setTextAlignment(TEXT_ALIGN_CENTER);
-        display.drawString(64, 45, info_config);
-        display.display();
+        info_config = "Pb cnx mqtt:" + String(client_mqtt.state()) + " " + String(nb_cnx);
         mqttconnected = false;
+        delay(5000);
       }
     }
   }
 }
 
 // ---------------------------------------------------- traduction_etiquette
-String traduction_etiquette(int etiq)
+String traduction_etiquette(int etiq, String valeur)
 {
 String rc;
 
@@ -519,142 +591,177 @@ String rc;
 
   switch (etiq) {
     case ETIQU_ADSC :
+      teleinfo._ADSC = Valeur;
       rc = "ADSC";
       break;
 
     case ETIQU_VTIC :
+      teleinfo.VTIC = Valeur;
       rc = "VTIC";
       break;
 
     case ETIQU_NGTF :
+      teleinfo.NGTF = Valeur;
       rc = "NGTF";
       break;
 
     case ETIQU_LTARF :
+      teleinfo.LTARF = Valeur;
       rc = "LTARF";
       break;
 
     case ETIQU_EAST:
+      teleinfo.EAST = Valeur.toDouble();
       rc = "EAST";
       break;
 
     case ETIQU_IRMS1:
+      teleinfo.IRMS1 = Valeur.toInt();
       rc = "IRMS1";
       break;
 
     case ETIQU_IRMS2:
+      teleinfo.IRMS2 = Valeur.toInt();
       rc = "IRMS2";
       break;
 
     case ETIQU_IRMS3:
+      teleinfo.IRMS3 = Valeur.toInt();
       rc = "IRMS3";
       break;
 
     case ETIQU_URMS1:
+      teleinfo.URMS1 = Valeur.toInt();
       rc = "URMS1";
       break;
 
     case ETIQU_URMS2:
+      teleinfo.URMS2 = Valeur.toInt();
       rc = "URMS2";
       break;
 
     case ETIQU_URMS3:
+      teleinfo.URMS3 = Valeur.toInt();
       rc = "URMS3";
       break;
 
     case ETIQU_PREF:
+      teleinfo.PREF = Valeur.toInt();
       rc = "PREF";
       break;
 
     case ETIQU_PCOUP:
+      teleinfo.PCOUP = Valeur.toInt();
       rc = "PCOUP";
       break;
 
     case ETIQU_SINSTS:
+      teleinfo.SINSTS = Valeur.toInt();
       rc = "SINSTS";
       break;
 
     case ETIQU_SINSTSmin:
+      teleinfo.SINSTSmin = Valeur.toInt();
       rc = "SINSTSmin";
       break;
 
     case ETIQU_SINSTSmax:
+      teleinfo.SINSTSmax = Valeur.toInt();
       rc = "SINSTSmax";
       break;
 
     case ETIQU_SINSTS1:
+      teleinfo.SINSTS1 = Valeur.toInt();
       rc = "SINSTS1";
       break;
 
     case ETIQU_SINSTS2:
+      teleinfo.SINSTS2 = Valeur.toInt();
       rc = "SINSTS2";
       break;
 
     case ETIQU_SINSTS3:
+      teleinfo.SINSTS3 = Valeur.toInt();
       rc = "SINSTS3";
       break;
 
     case ETIQU_STGE:
+      teleinfo.STGE = Valeur;
       rc = "STGE";
       break;
 
     case ETIQU_MSG1:
+      teleinfo.MSG1 = Valeur;
       rc = "MSG1";
       break;
 
     case ETIQU_NTARF:
+      teleinfo.NTARF = Valeur;
       rc = "NTARF";
       break;
 
     case ETIQU_NJOURF:
+      teleinfo.NJOURF = Valeur;
       rc = "NJOURF";
       break;
 
     case ETIQU_NJOURF1:
+      teleinfo.NJOURF1 = Valeur;
       rc = "NJOURF1";
       break;
 
     case ETIQU_EAIT:
+      teleinfo.EAIT = Valeur.toDouble();
       rc = "EAIT";
       break;
 
     case ETIQU_SINSTI:
+      teleinfo.SINSTI = Valeur.toInt();
       rc = "SINSTSI";
       break;
 
     case ETIQU_EASF01:
+      teleinfo.EASF01 = Valeur.toDouble();
       rc = "EASF01";
       break;
 
     case ETIQU_EASF02:
+      teleinfo.EASF02 = Valeur.toDouble();
       rc = "EASF02";
       break;
 
     case ETIQU_EASF03:
+      teleinfo.EASF03 = Valeur.toDouble();
       rc = "EASF03";
       break;
 
     case ETIQU_EASD01:
+      teleinfo.EASD01 = Valeur.toDouble();
       rc = "EASD01";
       break;
 
     case ETIQU_EASD02:
+      teleinfo.EASD02 = Valeur.toDouble();
       rc = "EASD02";
       break;
 
     case ETIQU_EASD03:
+      teleinfo.EASD03 = Valeur.toDouble();
       rc = "EASD03";
       break;
 
     case ETIQU_ERQ1:
+      teleinfo.ERQ1 = Valeur.toDouble();
       rc = "ERQ1";
       break;
 
     case ETIQU_ERQ2:
+      teleinfo.ERQ2 = Valeur.toDouble();
       rc = "ERQ2";
       break;
 
     case ETIQU_ERQ3:
+      teleinfo.ERQ3 = Valeur.toDouble();
       rc = "ERQ3";
       break;
 
@@ -679,9 +786,10 @@ String rc;
 // ---------------------------------------------------- traitement_data
 void traitement_data(int origine, String data)
 {
-String mqtt_buffer;
+String mqtt_buffer, url;
 int index=1;
 int etiqu;
+boolean flag_first = true;
   
   Serial.print(F("traitement_data:"));
   Serial.println(data);
@@ -705,10 +813,7 @@ int etiqu;
         data = data.substring(index+1);
         index = data.indexOf(";");
 
-        Etiquette = traduction_etiquette(etiqu);
-
-        // Recup valeur SINSTS pour affichage
-        if (Etiquette == "SINSTS") SINSTS=Valeur.toInt();
+        Etiquette = traduction_etiquette(etiqu, Valeur);
 
         // Verif boot linky ----
         if (Etiquette == "BOOT") {
@@ -727,11 +832,48 @@ int etiqu;
           Serial.print(mqtt_buffer);
           Serial.print("/");
           Serial.println(Valeur);
-          //client_mqtt.publish(mqtt_buffer.c_str(), Valeur.c_str(), true); 
+
           client_mqtt.publish(mqtt_buffer.c_str(), Valeur.c_str());
           Nb_sent++;
         }
+
+        // POST init ----------
+        if (postactive == true) {
+          if (flag_first == true) {
+            flag_first = false;
+            url = F("/maj_post.php?token=");
+            url += token_post;
+          }
+          url += F("&");
+          url += Etiquette;
+          url += F("=");
+          url += Valeur;
+        }
       }
+    }
+	
+    // POST send ----------
+    if (postactive == true) {
+      Serial.print(F("Send post:"));
+      Serial.println(url);
+
+      HttpClient http_client = HttpClient(client, url_post, 80);
+      http_client.get(url);
+      httpCode = http_client.responseStatusCode();
+
+      if(httpCode > 0) {
+        Serial.print(F("Retour http get: "));
+      }
+      else {
+        Serial.print(F("Erreur http get: "));
+        info_config = "Erreur http get:" + httpCode;
+        display.setFont(ArialMT_Plain_10);
+        display.setTextAlignment(TEXT_ALIGN_CENTER);
+        display.drawString(64, 45, info_config);
+        display.display();
+        delay(1000);
+      }
+      Serial.println(httpCode);
     }
     lastTime_display = millis();
   } 
@@ -791,8 +933,8 @@ void page_info_json(AsyncWebServerRequest *request)
 {
 String strJson = "{\n";
 
-  Serial.println(F("Page config.json"));
-  
+  Serial.println(F("Page info.json"));
+
   // version ---------------------
   strJson += F("\"version\": \"");
   strJson += VERSION;
@@ -838,6 +980,11 @@ String strJson = "{\n";
   strJson += Step;
   strJson += F("\",\n");
 
+  // httpCode ---------------------
+  strJson += F("\"httpCode\": \"");
+  strJson += httpCode;
+  strJson += F("\",\n");
+  
   // info_config ---------------------
   strJson += F("\"info_config\": \"");
   strJson += info_config;
@@ -848,6 +995,197 @@ String strJson = "{\n";
   request->send(200, "text/json", strJson);
 }
 
+//----------------------------------------------------------------------- page_config_json
+void page_teleinfo_json(AsyncWebServerRequest *request)
+{
+String strJson = "{\n";
+
+  Serial.println(F("Page teleinfo.json"));
+  
+  // ADSC ---------------------
+  strJson += F("\"ADSC\": \"");
+  strJson += teleinfo._ADSC;
+  strJson += F("\",\n");
+
+  // VTIC ---------------------
+  strJson += F("\"VTIC\": \"");
+  strJson += teleinfo.VTIC;
+  strJson += F("\",\n");
+
+  // NGTF ---------------------
+  strJson += F("\"NGTF\": \"");
+  strJson += teleinfo.NGTF;
+  strJson += F("\",\n");
+
+  // LTARF ---------------------
+  strJson += F("\"LTARF\": \"");
+  strJson += teleinfo.LTARF;
+  strJson += F("\",\n");
+
+  // EAST ---------------------
+  strJson += F("\"EAST\": \"");
+  strJson += teleinfo.EAST;
+  strJson += F("\",\n");
+
+  // EAIT ---------------------
+  strJson += F("\"EAIT\": \"");
+  strJson += teleinfo.EAIT;
+  strJson += F("\",\n");
+
+  // IRMS1 ---------------------
+  strJson += F("\"IRMS1\": \"");
+  strJson += teleinfo.IRMS1;
+  strJson += F("\",\n");
+
+  // IRMS2 ---------------------
+  strJson += F("\"IRMS2\": \"");
+  strJson += teleinfo.IRMS2;
+  strJson += F("\",\n");
+
+  // IRMS3 ---------------------
+  strJson += F("\"IRMS3\": \"");
+  strJson += teleinfo.IRMS3;
+  strJson += F("\",\n");
+
+  // URMS1 ---------------------
+  strJson += F("\"URMS1\": \"");
+  strJson += teleinfo.URMS1;
+  strJson += F("\",\n");
+
+  // URMS2 ---------------------
+  strJson += F("\"URMS2\": \"");
+  strJson += teleinfo.URMS2;
+  strJson += F("\",\n");
+
+  // URMS3 ---------------------
+  strJson += F("\"URMS3\": \"");
+  strJson += teleinfo.URMS3;
+  strJson += F("\",\n");
+    
+  // PREF ---------------------
+  strJson += F("\"PREF\": \"");
+  strJson += teleinfo.PREF;
+  strJson += F("\",\n");
+
+  // PCOUP ---------------------
+  strJson += F("\"PCOUP\": \"");
+  strJson += teleinfo.PCOUP;
+  strJson += F("\",\n");
+
+  // SINSTS ---------------------
+  strJson += F("\"SINSTS\": \"");
+  strJson += teleinfo.SINSTS;
+  strJson += F("\",\n");
+
+  // SINSTSmin ---------------------
+  strJson += F("\"SINSTSmin\": \"");
+  strJson += teleinfo.SINSTSmin;
+  strJson += F("\",\n");
+
+  // SINSTSmax ---------------------
+  strJson += F("\"SINSTSmax\": \"");
+  strJson += teleinfo.SINSTSmax;
+  strJson += F("\",\n");
+
+  // SINSTS1 ---------------------
+  strJson += F("\"SINSTS1\": \"");
+  strJson += teleinfo.SINSTS1;
+  strJson += F("\",\n");
+
+  // SINSTS2 ---------------------
+  strJson += F("\"SINSTS2\": \"");
+  strJson += teleinfo.SINSTS2;
+  strJson += F("\",\n");
+
+  // SINSTS3 ---------------------
+  strJson += F("\"SINSTS3\": \"");
+  strJson += teleinfo.SINSTS3;
+  strJson += F("\",\n");
+
+  // SINSTI ---------------------
+  strJson += F("\"SINSTI\": \"");
+  strJson += teleinfo.SINSTI;
+  strJson += F("\",\n");
+
+  // STGE ---------------------
+  strJson += F("\"STGE\": \"");
+  strJson += teleinfo.STGE;
+  strJson += F("\",\n");
+
+  // MSG1 ---------------------
+  strJson += F("\"MSG1\": \"");
+  strJson += teleinfo.MSG1;
+  strJson += F("\",\n");
+
+  // NTARF ---------------------
+  strJson += F("\"NTARF\": \"");
+  strJson += teleinfo.NTARF;
+  strJson += F("\",\n");
+
+  // NJOURF ---------------------
+  strJson += F("\"NJOURF\": \"");
+  strJson += teleinfo.NJOURF;
+  strJson += F("\",\n");
+
+  // NJOURF1 ---------------------
+  strJson += F("\"NJOURF1\": \"");
+  strJson += teleinfo.NJOURF1;
+  strJson += F("\",\n");
+
+  // EASF01 ---------------------
+  strJson += F("\"EASF01\": \"");
+  strJson += teleinfo.EASF01;
+  strJson += F("\",\n");
+
+  // EASF02 ---------------------
+  strJson += F("\"EASF02\": \"");
+  strJson += teleinfo.EASF02;
+  strJson += F("\",\n");
+
+  // EASF03 ---------------------
+  strJson += F("\"EASF03\": \"");
+  strJson += teleinfo.EASF03;
+  strJson += F("\",\n");
+
+  // EASD01 ---------------------
+  strJson += F("\"EASD01\": \"");
+  strJson += teleinfo.EASD01;
+  strJson += F("\",\n");
+
+  // EASD02 ---------------------
+  strJson += F("\"EASD02\": \"");
+  strJson += teleinfo.EASD02;
+  strJson += F("\",\n");
+
+  // EASD03 ---------------------
+  strJson += F("\"EASD03\": \"");
+  strJson += teleinfo.EASD03;
+  strJson += F("\",\n");
+
+  // ERQ1 ---------------------
+  strJson += F("\"ERQ1\": \"");
+  strJson += teleinfo.ERQ1;
+  strJson += F("\",\n");
+
+  // ERQ2 ---------------------
+  strJson += F("\"ERQ2\": \"");
+  strJson += teleinfo.ERQ2;
+  strJson += F("\",\n");
+
+  // ERQ3 ---------------------
+  strJson += F("\"ERQ3\": \"");
+  strJson += teleinfo.ERQ3;
+  strJson += F("\",\n");
+  
+  // ERQ4 ---------------------
+  strJson += F("\"ERQ4\": \"");
+  strJson += teleinfo.ERQ4;
+  strJson += F("\"\n");
+
+  strJson += F("}");
+
+  request->send(200, "text/json", strJson);
+}
 
 //----------------------------------------------------------------------- page_config_json
 void page_config_json(AsyncWebServerRequest *request)
@@ -856,6 +1194,11 @@ String strJson = "{\n";
 
   Serial.println(F("Page config.json"));
   
+  // module name---------------------
+  strJson += F("\"module_name\": \"");
+  strJson += module_name;
+  strJson += F("\",\n");
+
   // version ---------------------
   strJson += F("\"version\": \"");
   strJson += VERSION;
@@ -884,6 +1227,16 @@ String strJson = "{\n";
   // token mqtt ---------------------
   strJson += F("\"token_mqtt\": \"");
   strJson += token_mqtt;
+  strJson += F("\",\n");
+
+  // url post ---------------------
+  strJson += F("\"url_post\": \"");
+  strJson += url_post;
+  strJson += F("\",\n");
+
+  // token post ---------------------
+  strJson += F("\"token_post\": \"");
+  strJson += token_post;
   strJson += F("\"\n");
 
   strJson += F("}");
@@ -904,13 +1257,17 @@ boolean flag_restart = false;
     AsyncWebParameter* p = request->getParam(i);
     Serial.printf("POST[%s]: %s\n", p->name().c_str(), p->value().c_str());
     
+    if (strstr(p->name().c_str(), "module_name")) strcpy(module_name, p->value().c_str());
     if (strstr(p->name().c_str(), "url_mqtt")) strcpy(url_mqtt, p->value().c_str());
     if (strstr(p->name().c_str(), "port_mqtt")) port_mqtt = atoi(p->value().c_str());
     if (strstr(p->name().c_str(), "user_mqtt")) strcpy(user_mqtt, p->value().c_str());
     if (strstr(p->name().c_str(), "pwd_mqtt")) strcpy(pwd_mqtt, p->value().c_str());
     if (strstr(p->name().c_str(), "token_mqtt")) strcpy(token_mqtt, p->value().c_str());
+    if (strstr(p->name().c_str(), "url_post")) strcpy(url_post, p->value().c_str());
+    if (strstr(p->name().c_str(), "token_post")) strcpy(token_post, p->value().c_str());
     
     // check if restart required 
+    if (strcmp(module_name, memo_module_name) != 0) flag_restart = true;
     if (strcmp(url_mqtt, memo_url_mqtt) != 0) flag_restart = true;
     if (strcmp(user_mqtt, memo_user_mqtt) != 0) flag_restart = true;
     if (strcmp(pwd_mqtt, memo_pwd_mqtt) != 0) flag_restart = true;
@@ -974,6 +1331,11 @@ void loadPages()
     page_config_json(request);
   });
 
+  server.on("/teleinfo.json", HTTP_GET, [](AsyncWebServerRequest *request)
+  {
+    page_teleinfo_json(request);
+  });
+
   server.on("/config.htm", HTTP_POST, [](AsyncWebServerRequest *request)
   {
     page_config_htm(request);
@@ -991,8 +1353,9 @@ void loadPages()
 // ---------------------------------------------------- SETUP
 void setup()
 {
+
   Serial.begin(MY_BAUD_RATE);
-  //WiFi.mode(WIFI_STA);
+
   pinMode(TRIGGER_PIN, INPUT_PULLUP);
   
   Serial.println(F("   __|              _/           _ )  |"));
@@ -1006,6 +1369,7 @@ void setup()
 
   display.init();
   display.flipScreenVertically();
+  display.setTextAlignment(TEXT_ALIGN_LEFT);
   display.setFont(ArialMT_Plain_10);
     
   display.clear();
@@ -1013,8 +1377,11 @@ void setup()
   display.drawXbm(0, 0, 128, 64, fb_bits);
 
   display.display();
+
+  //----------------------------------------------------WIFI
   WiFiManager wm;
 
+  WiFi.hostname(module_name);
   wm.setAPCallback(configModeCallback);
   wm.setSaveConfigCallback(saveConfigCallback);
   wm.setMinimumSignalQuality(10);
@@ -1031,6 +1398,7 @@ void setup()
   Serial.println("IP address: ");
   Serial.println(WiFi.localIP());
 
+  //----------------------------------------------------LORA
   xxtea.setKey(CRYPT_PASS);
 
   LoRa.setPins(SX1278_CS, SX1278_RST, SX1278_IRQ);
@@ -1039,6 +1407,7 @@ void setup()
   if (!LoRa.begin(868E6)) {
     Serial.println("Starting RFM95 failed!");
     display.clear();
+    display.setTextAlignment(TEXT_ALIGN_LEFT);
     display.setFont(ArialMT_Plain_16);
     display.drawString(3, 10, "RFM95 failed!!");
     display.display();
@@ -1050,10 +1419,53 @@ void setup()
     Serial.println("OK.");
   }
 
+  //----------------------------------------------------SERVER
   loadPages();
   server.begin();
   
+  //----------------------------------------------------MDSN
   start_mdns_service();
+
+  //----------------------------------------------------OTA
+  ArduinoOTA.setPassword(PWD_OTA);
+  ArduinoOTA.onStart([]() {
+    display.clear();
+    display.setTextAlignment(TEXT_ALIGN_LEFT);
+    display.setFont(ArialMT_Plain_16);
+    display.drawString(3, 10,"OTA Start");
+    display.display();
+  });
+  ArduinoOTA.onEnd([]() {
+    display.clear();
+    display.setTextAlignment(TEXT_ALIGN_LEFT);
+    display.setFont(ArialMT_Plain_16);
+    display.drawString(3, 10,"OTA End");
+    display.display();
+  });
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    display.clear();
+    display.setTextAlignment(TEXT_ALIGN_LEFT);
+    display.setFont(ArialMT_Plain_16);
+    sprintf(buffer,"%u%%", (progress / (total / 100)));
+    display.drawString(3, 10, buffer);
+    display.display();
+  });
+  ArduinoOTA.onError([](ota_error_t error) {
+    sprintf(buffer,"Error[%u]: ", error);
+    if (error == OTA_AUTH_ERROR) sprintf(buffer,"%s", "Auth Failed");
+    else if (error == OTA_BEGIN_ERROR) sprintf(buffer,"%s", "Begin Failed");
+    else if (error == OTA_CONNECT_ERROR) sprintf(buffer,"%s", "Connect Failed");
+    else if (error == OTA_RECEIVE_ERROR) sprintf(buffer,"%s", "Receive Failed");
+    else if (error == OTA_END_ERROR) sprintf(buffer,"%s", "End Failed");
+   
+    display.clear();
+    display.setTextAlignment(TEXT_ALIGN_LEFT);
+    display.setFont(ArialMT_Plain_16);
+    display.drawString(3, 10, buffer);
+    display.display();
+  });
+  ArduinoOTA.setHostname(module_name);
+  ArduinoOTA.begin();
 
 }
 
@@ -1067,7 +1479,12 @@ void loop()
   onReceive(LoRa.parsePacket());
 
   if (url_mqtt[0] != 0 && token_mqtt[0] != 0) mqttactive = true;
-    else mqttactive = false;
+    else {
+      mqttactive = false;
+      if (url_post[0] != 0 && token_post[0] != 0) postactive = true;
+        else postactive = false;
+    }
+ 
   
   if (currentTime - lastTime_display > SEND_FREQUENCY_DISPLAY || first_start == true) {
     display.clear();
@@ -1076,19 +1493,16 @@ void loop()
     display.setTextAlignment(TEXT_ALIGN_CENTER);
     if (!mqttactive) {
       info_config = "mqtt non configuré";
-      display.drawString(64, 53, info_config);
     }
-    else {
-      if (mqttconnected) info_config = "mqtt connecté";
-      display.drawString(64, 53, info_config);
-    }
+    display.drawString(64, 53, info_config);
+
     display.setFont(ArialMT_Plain_16); 
-    display.drawString(64, 30, String(SINSTS) + " VA");
+    display.drawString(64, 30, String(teleinfo.SINSTS) + " VA");
     
     display.setFont(ArialMT_Plain_10);
     display.setTextAlignment(TEXT_ALIGN_LEFT);
     display.drawString(1, 1, WiFi.localIP().toString());
-    display.drawString(2, 15, String(Nb_rcv) + "/" + String(Nb_sent));
+    display.drawString(2, 15, String(Nb_rcv) + " / " + String(Nb_sent));
         
     draw_rssi();
 
@@ -1104,7 +1518,6 @@ void loop()
     Serial.print(":");
     Serial.println(port_mqtt);
     client_mqtt.setServer(url_mqtt, port_mqtt);
-    
   }
 
   // mqtt actif ?

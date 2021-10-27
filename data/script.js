@@ -45,11 +45,20 @@ function lire_item_json(myjson) {
         if (name == "pwd_mqtt") {
             $("#pwd_mqtt").val(value);
         }
+        if (name == "module_name") {
+            $("#module_name").val(value);
+        } 
         if (name == "version") {
             document.getElementById("version").innerHTML = value;
         } 
         if (name == "info_config") {
             affiche_info_config(value);
+        }
+        if (name == "url_post") {
+            $("#url_post").val(value);
+        }
+        if (name == "token_post") {
+            $("#token_post").val(value);
         }
     });
 }

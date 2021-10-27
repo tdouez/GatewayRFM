@@ -19,6 +19,12 @@
     <!-- Configuration -->
     <div id="config" class="w3-margin w3-card menu">
         <form id="form_config" class="w3-container w3-padding">
+            <div class="w3-panel w3-border">
+                <p>
+                    <label class="w3-text-blue"><b>Nom Module</b></label>
+                    <input class="w3-input w3-border" type="text" name="module_name" id="module_name" maxlength="32" value="" style="width:40%;">
+                </p>
+            </div>
             <div class="w3-panel w3-border"> 
                 <p>
                     <label class="w3-text-blue"><b>Serveur MQTT</b></label>
@@ -31,6 +37,11 @@
                     <input class="w3-input w3-border" type="text" name="user_mqtt" id="user_mqtt" maxlength="32" value="" style="width:40%;">
                     <label class="w3-text-blue"><b>Password MQTT</b></label>
                     <input class="w3-input w3-border" type="text" name="pwd_mqtt" id="pwd_mqtt" maxlength="32" value="" style="width:40%;">
+                    <br>
+                    <label class="w3-text-blue"><b>Serveur POST</b></label>
+                    <input class="w3-input w3-border" type="text" name="url_post" id="url_post" maxlength="64" value="" style="width:40%;">
+                    <label class="w3-text-blue"><b>Token POST</b></label>
+                    <input class="w3-input w3-border" type="text" name="token_post" id="token_post" maxlength="32" value="" style="width:40%;">
                 </p>
             </div>
             <div class="w3-panel w3-green" id="p_info_config" style="display:none"><span id="t_info_config"></span></div>
