@@ -29,7 +29,8 @@
 // 2021/06/10 - FB V1.01
 // 2021/08/09 - FB V1.02 - Add POST request
 // 2021/08/30 - FB V1.03 - Update POST request
-// 2021/09/01 - FB V1.04 - Add OTA and module name
+// 2021/09/01 - FB V1.04 - Add module name
+// 2021/12/01 - FB V1.05 - Not blocking Mqtt reconnect & change icons display
 //--------------------------------------------------------------------
 #include <Arduino.h>
 #include <WiFiManager.h>
@@ -46,10 +47,9 @@
 #include <SPIFFS.h>
 #define MAX_XXTEA_DATA8  200
 #include <xxtea-lib.h>
-#include <ArduinoOTA.h>
 
 
-#define VERSION   "v1.0.4"
+#define VERSION   "v1.0.5"
 
 #define MY_BAUD_RATE 115200
 
@@ -82,7 +82,6 @@
 #define ENTETE  '$'
 
 #define CRYPT_PASS "FumeeBleue"
-#define PWD_OTA    "fumeebleue"
 
 #define RFM_TX_POWER 20   // 5..23 dBm, 13 dBm is default
 
@@ -277,13 +276,31 @@ const unsigned char radio7_bits[] PROGMEM = {
    0x04, 0x55, 0x01, 0x44, 0x55, 0x01, 0x54, 0x55, 0x01, 0x00, 0x00, 0x00,
    0xfc, 0xff, 0x01 };
 
+// 'mqtt_tiny', 20x20px
+const unsigned char mqtt_tiny[] PROGMEM = {
+  0xFF, 0xC1, 0x0F, 0xFF, 0x07, 0x0F, 0xF8, 0x0F, 0x0E, 0x80, 0x3F, 0x0C, 
+  0x00, 0x7E, 0x08, 0x0F, 0xFC, 0x08, 0x7F, 0xF0, 0x01, 0xFF, 0xE0, 0x01, 
+  0xFD, 0xC3, 0x03, 0xE0, 0xC7, 0x07, 0x80, 0x8F, 0x07, 0x07, 0x1F, 0x0F, 
+  0x1F, 0x1E, 0x0F, 0x3F, 0x3C, 0x0E, 0x7F, 0x3C, 0x0E, 0xFF, 0x78, 0x0E, 
+  0xFB, 0x78, 0x0C, 0xFF, 0x78, 0x0C, 0xFF, 0xF9, 0x0C, 0xFF, 0x71, 0x0C, 
+  };
+
+// 'post_tiny', 20x19px
+const unsigned char post_tiny[] PROGMEM = {
+  0x00, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00, 0x40, 0x00, 0x00, 0xC0, 0x00, 
+  0x00, 0xE0, 0x01, 0x00, 0xFC, 0x03, 0x04, 0xEF, 0x07, 0xC2, 0xFF, 0x07, 
+  0xC1, 0xFF, 0x03, 0xE1, 0xE3, 0x01, 0x61, 0xC0, 0x00, 0x11, 0x40, 0x00, 
+  0x01, 0x20, 0x00, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 
+  0x01, 0x80, 0x00, 0x03, 0x40, 0x00, 0xFF, 0x3F, 0x00,
+  };
 
 String Etiquette;
 String Version_Linky;
 String Step;
 String Valeur;
 unsigned long Nb_rcv = 0;
-unsigned long Nb_sent = 0;
+unsigned long Nb_sent_mqtt = 0;
+unsigned long Nb_sent_post = 0;
 
 uint32_t SEND_FREQUENCY_DISPLAY = 1000; // Minimum time between send (in milliseconds). 
 uint32_t lastTime_display = 0;
@@ -316,6 +333,7 @@ unsigned int nb_boot_linky=0;
 unsigned int nb_decode_failed=0;
 int httpCode=0;
 char buffer[64]; 
+long lastReconnectAttempt = 0;
 
 String info_config = "";
 
@@ -539,45 +557,78 @@ void draw_rssi() {
   if (rssi >= 90) display.drawXbm(100, 2, 17, 9, radio7_bits);
 }
 
+//------------------------------------------------------------------ draw_display
+void draw_display() {
+  display.clear();
+  display.setFont(ArialMT_Plain_10);
+
+  // draw ip --------------------
+  display.setTextAlignment(TEXT_ALIGN_LEFT);
+  display.drawString(1, 1, WiFi.localIP().toString());
+  // draw wifi level -------------
+  draw_rssi();
+  // draw first separator --------------
+  display.drawLine(0, 12, 128, 12);
+  display.setTextAlignment(TEXT_ALIGN_CENTER);
+  display.drawString(64, 20, String(teleinfo.SINSTS) + " VA");
+  display.drawString(64, 37, String(Nb_rcv));
+
+  if (mqttconnected) {
+    display.drawXbm(8, 15, 20, 20, mqtt_tiny);
+    //display.drawString(2, 15, String(Nb_rcv) + " / " + String(Nb_sent_mqtt));
+    display.drawString(2, 37, String(Nb_sent_mqtt));
+  }
+
+  if (postactive) {
+    display.setTextAlignment(TEXT_ALIGN_RIGHT);
+    display.drawXbm(105, 15, 20, 19, post_tiny);
+    //display.drawString(2, 15, String(Nb_rcv) + " / " + String(Nb_sent_mqtt));
+    display.drawString(128, 37, String(Nb_sent_post));
+  }
+
+  // draw second separator --------------
+  display.drawLine(0, 52, 128, 52);
+  // draw information --------------
+  display.setTextAlignment(TEXT_ALIGN_CENTER);
+  display.drawString(64, 54, info_config);
+
+  display.display();
+}
 
 // ---------------------------------------------------- reconnect_mqtt
-void reconnect_mqtt() {
+boolean reconnect_mqtt() {
   int nb_cnx = 0;
 
-  // Loop until we're reconnected
-  while (!client_mqtt.connected()) {
-    Serial.print("Attempting MQTT connection...");
-    info_config = "Cnx MQTT..";
-    // Attempt to connect
-    if (user_mqtt[0] != 0) { // si user renseigné
-      if (client_mqtt.connect("FBGateway", user_mqtt, pwd_mqtt)) {
-        Serial.println("connected");
-        info_config = "MQTT connecté";
-        mqttconnected = true;
-      } else {
-        nb_cnx++;
-        Serial.print("failed, rc=");
-        Serial.print(client_mqtt.state());
-        info_config = "Pb cnx mqtt:" + String(client_mqtt.state()) + " " + String(nb_cnx);
-        mqttconnected = false;
-        delay(5000);
-      }
-    }
+  // Attempt to connect
+  if (user_mqtt[0] != 0) { // si user renseigné
+    if (client_mqtt.connect("FBGateway", user_mqtt, pwd_mqtt)) {
+      Serial.println("connected");
+      mqttconnected = true;
+      return client.connected();
+    } 
     else {
-      if (client_mqtt.connect("FBGateway")) {
-        Serial.println("connected");
-        info_config = "MQTT connecté";
-        mqttconnected = true;
-      } else {
-        nb_cnx++;
-        Serial.print("failed, rc=");
-        Serial.print(client_mqtt.state());
-        info_config = "Pb cnx mqtt:" + String(client_mqtt.state()) + " " + String(nb_cnx);
-        mqttconnected = false;
-        delay(5000);
-      }
+      nb_cnx++;
+      Serial.print("failed, rc=");
+      Serial.print(client_mqtt.state());
+      info_config = "Pb cnx mqtt:" + String(client_mqtt.state()) + " " + String(nb_cnx);
+      mqttconnected = false;
     }
   }
+  else {
+    if (client_mqtt.connect("FBGateway")) {
+      Serial.println("connected");
+      mqttconnected = true;
+      return client.connected();
+    } 
+    else {
+      nb_cnx++;
+      Serial.print("failed, rc=");
+      Serial.print(client_mqtt.state());
+      info_config = "Pb cnx mqtt:" + String(client_mqtt.state()) + " " + String(nb_cnx);
+      mqttconnected = false;
+    }
+  }
+  return false;
 }
 
 // ---------------------------------------------------- traduction_etiquette
@@ -834,7 +885,7 @@ boolean flag_first = true;
           Serial.println(Valeur);
 
           client_mqtt.publish(mqtt_buffer.c_str(), Valeur.c_str());
-          Nb_sent++;
+          Nb_sent_mqtt++;
         }
 
         // POST init ----------
@@ -863,15 +914,11 @@ boolean flag_first = true;
 
       if(httpCode > 0) {
         Serial.print(F("Retour http get: "));
+        Nb_sent_post++;
       }
       else {
         Serial.print(F("Erreur http get: "));
         info_config = "Erreur http get:" + httpCode;
-        display.setFont(ArialMT_Plain_10);
-        display.setTextAlignment(TEXT_ALIGN_CENTER);
-        display.drawString(64, 45, info_config);
-        display.display();
-        delay(1000);
       }
       Serial.println(httpCode);
     }
@@ -933,7 +980,12 @@ void page_info_json(AsyncWebServerRequest *request)
 {
 String strJson = "{\n";
 
-  Serial.println(F("Page info.json"));
+  Serial.println(F("Page config.json"));
+  
+  // module name---------------------
+  strJson += F("\"module_name\": \"");
+  strJson += module_name;
+  strJson += F("\",\n");
 
   // version ---------------------
   strJson += F("\"version\": \"");
@@ -965,9 +1017,14 @@ String strJson = "{\n";
   strJson += nb_decode_failed;
   strJson += F("\",\n");
     
-  // nb_sent ---------------------
-  strJson += F("\"nb_sent\": \"");
-  strJson += Nb_sent;
+  // nb_sent_mqtt ---------------------
+  strJson += F("\"nb_sent_mqtt\": \"");
+  strJson += Nb_sent_mqtt;
+  strJson += F("\",\n");
+
+  // nb_sent_post ---------------------
+  strJson += F("\"nb_sent_post\": \"");
+  strJson += Nb_sent_post;
   strJson += F("\",\n");
 
   // Etiquette ---------------------
@@ -1194,14 +1251,14 @@ String strJson = "{\n";
 
   Serial.println(F("Page config.json"));
   
-  // module name---------------------
-  strJson += F("\"module_name\": \"");
-  strJson += module_name;
-  strJson += F("\",\n");
-
   // version ---------------------
   strJson += F("\"version\": \"");
   strJson += VERSION;
+  strJson += F("\",\n");
+
+  // module_name ---------------------
+  strJson += F("\"module_name\": \"");
+  strJson += module_name;
   strJson += F("\",\n");
 
   // url mqtt ---------------------
@@ -1316,6 +1373,31 @@ void loadPages()
     request->send(SPIFFS, "/fb.svg", "image/svg+xml");
   });
 
+  server.on("/elec.png", HTTP_GET, [](AsyncWebServerRequest *request)
+  {
+    request->send(SPIFFS, "/elec.png", "image/png");
+  });
+
+  server.on("/lora.png", HTTP_GET, [](AsyncWebServerRequest *request)
+  {
+    request->send(SPIFFS, "/lora.png", "image/png");
+  });
+
+  server.on("/post.png", HTTP_GET, [](AsyncWebServerRequest *request)
+  {
+    request->send(SPIFFS, "/post.png", "image/png");
+  });
+
+  server.on("/mqtt.png", HTTP_GET, [](AsyncWebServerRequest *request)
+  {
+    request->send(SPIFFS, "/mqtt.png", "image/png");
+  });
+
+  server.on("/lora.png", HTTP_GET, [](AsyncWebServerRequest *request)
+  {
+    request->send(SPIFFS, "/lora.png", "image/png");
+  });
+
   server.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest *request)
   {
     request->send(SPIFFS, "/favicon.ico", "image/x-icon");
@@ -1425,48 +1507,7 @@ void setup()
   
   //----------------------------------------------------MDSN
   start_mdns_service();
-
-  //----------------------------------------------------OTA
-  ArduinoOTA.setPassword(PWD_OTA);
-  ArduinoOTA.onStart([]() {
-    display.clear();
-    display.setTextAlignment(TEXT_ALIGN_LEFT);
-    display.setFont(ArialMT_Plain_16);
-    display.drawString(3, 10,"OTA Start");
-    display.display();
-  });
-  ArduinoOTA.onEnd([]() {
-    display.clear();
-    display.setTextAlignment(TEXT_ALIGN_LEFT);
-    display.setFont(ArialMT_Plain_16);
-    display.drawString(3, 10,"OTA End");
-    display.display();
-  });
-  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
-    display.clear();
-    display.setTextAlignment(TEXT_ALIGN_LEFT);
-    display.setFont(ArialMT_Plain_16);
-    sprintf(buffer,"%u%%", (progress / (total / 100)));
-    display.drawString(3, 10, buffer);
-    display.display();
-  });
-  ArduinoOTA.onError([](ota_error_t error) {
-    sprintf(buffer,"Error[%u]: ", error);
-    if (error == OTA_AUTH_ERROR) sprintf(buffer,"%s", "Auth Failed");
-    else if (error == OTA_BEGIN_ERROR) sprintf(buffer,"%s", "Begin Failed");
-    else if (error == OTA_CONNECT_ERROR) sprintf(buffer,"%s", "Connect Failed");
-    else if (error == OTA_RECEIVE_ERROR) sprintf(buffer,"%s", "Receive Failed");
-    else if (error == OTA_END_ERROR) sprintf(buffer,"%s", "End Failed");
-   
-    display.clear();
-    display.setTextAlignment(TEXT_ALIGN_LEFT);
-    display.setFont(ArialMT_Plain_16);
-    display.drawString(3, 10, buffer);
-    display.display();
-  });
-  ArduinoOTA.setHostname(module_name);
-  ArduinoOTA.begin();
-
+  
 }
 
 
@@ -1479,34 +1520,15 @@ void loop()
   onReceive(LoRa.parsePacket());
 
   if (url_mqtt[0] != 0 && token_mqtt[0] != 0) mqttactive = true;
-    else {
-      mqttactive = false;
-      if (url_post[0] != 0 && token_post[0] != 0) postactive = true;
+    else mqttactive = false;
+
+  if (url_post[0] != 0 && token_post[0] != 0) postactive = true;
         else postactive = false;
-    }
- 
   
   if (currentTime - lastTime_display > SEND_FREQUENCY_DISPLAY || first_start == true) {
-    display.clear();
     
-    display.setFont(ArialMT_Plain_10);
-    display.setTextAlignment(TEXT_ALIGN_CENTER);
-    if (!mqttactive) {
-      info_config = "mqtt non configuré";
-    }
-    display.drawString(64, 53, info_config);
+    draw_display();
 
-    display.setFont(ArialMT_Plain_16); 
-    display.drawString(64, 30, String(teleinfo.SINSTS) + " VA");
-    
-    display.setFont(ArialMT_Plain_10);
-    display.setTextAlignment(TEXT_ALIGN_LEFT);
-    display.drawString(1, 1, WiFi.localIP().toString());
-    display.drawString(2, 15, String(Nb_rcv) + " / " + String(Nb_sent));
-        
-    draw_rssi();
-
-    display.display();
     lastTime_display = currentTime;
   }
 
@@ -1523,9 +1545,20 @@ void loop()
   // mqtt actif ?
   if (mqttactive) {
     if (!client_mqtt.connected()) {
-      reconnect_mqtt();
+      long now = millis();
+      if (now - lastReconnectAttempt > 5000) {
+        lastReconnectAttempt = now;
+        // Attempt to reconnect
+        if (reconnect_mqtt()) {
+          lastReconnectAttempt = 0;
+        }
+      }
+    } else {
+      // Client connected
+      client_mqtt.loop();
     }
-    client_mqtt.loop();
   }
+
+  
   
 }
