@@ -25,12 +25,17 @@
 //   _| |  |   ` \    -_)   -_)    _ \  |   -_)  |  |   -_)     
 //  _| \_,_| _|_|_| \___| \___|   ___/ _| \___| \_,_| \___|  
 //--------------------------------------------------------------------    
+// Code mise à disposition selon les termes de la Licence Creative Commons Attribution
+// Pas d’Utilisation Commerciale.
+// Partage dans les Mêmes Conditions 4.0 International.
+//--------------------------------------------------------------------
 // 2021/01/01 - FB V1.00
 // 2021/06/10 - FB V1.01
 // 2021/08/09 - FB V1.02 - Add POST request
 // 2021/08/30 - FB V1.03 - Update POST request
 // 2021/09/01 - FB V1.04 - Add module name
 // 2021/12/01 - FB V1.05 - Not blocking Mqtt reconnect & change icons display
+// 2021/12/08 - FB V2.00 - protocole update
 //--------------------------------------------------------------------
 #include <Arduino.h>
 #include <WiFiManager.h>
@@ -45,11 +50,9 @@
 #include "SSD1306Wire.h"
 #include <mdns.h>
 #include <SPIFFS.h>
-#define MAX_XXTEA_DATA8  200
-#include <xxtea-lib.h>
 
 
-#define VERSION   "v1.0.5"
+#define VERSION   "v2.0.0"
 
 #define MY_BAUD_RATE 115200
 
@@ -81,53 +84,12 @@
 
 #define ENTETE  '$'
 
-#define CRYPT_PASS "FumeeBleue"
-
 #define RFM_TX_POWER 20   // 5..23 dBm, 13 dBm is default
 
 #define RH_RF95_MAX_MESSAGE_LEN 200
 #define MAX_BUFFER      32
 #define MAX_BUFFER_URL  64
 #define DEFAULT_PORT_MQTT 1883
-
-#define ETIQU_ADSC     1
-#define ETIQU_VTIC     2
-#define ETIQU_NGTF     3
-#define ETIQU_LTARF    4
-#define ETIQU_EAST     5
-#define ETIQU_IRMS1    6
-#define ETIQU_IRMS2    7
-#define ETIQU_IRMS3    8
-#define ETIQU_URMS1    9
-#define ETIQU_URMS2    10
-#define ETIQU_URMS3    11
-#define ETIQU_PREF     12
-#define ETIQU_PCOUP    13
-#define ETIQU_SINSTS   14
-#define ETIQU_SINSTS1  15
-#define ETIQU_SINSTS2  16
-#define ETIQU_SINSTS3  17
-#define ETIQU_STGE     18
-#define ETIQU_MSG1     19
-#define ETIQU_NTARF    20
-#define ETIQU_NJOURF   21
-#define ETIQU_NJOURF1  22
-#define ETIQU_EAIT     23
-#define ETIQU_SINSTI   24
-#define ETIQU_EASF01   25
-#define ETIQU_EASF02   26
-#define ETIQU_EASF03   27
-#define ETIQU_EASD01   28
-#define ETIQU_EASD02   29
-#define ETIQU_EASD03   30
-#define ETIQU_ERQ1     31
-#define ETIQU_ERQ2     32
-#define ETIQU_ERQ3     33
-
-#define ETIQU_SINSTSmin   50
-#define ETIQU_SINSTSmax   51
-#define ETIQU_STEP        90
-#define ETIQU_BOOT        91
 
 
 #define fb_width 128
@@ -294,10 +256,7 @@ const unsigned char post_tiny[] PROGMEM = {
   0x01, 0x80, 0x00, 0x03, 0x40, 0x00, 0xFF, 0x3F, 0x00,
   };
 
-String Etiquette;
 String Version_Linky;
-String Step;
-String Valeur;
 unsigned long Nb_rcv = 0;
 unsigned long Nb_sent_mqtt = 0;
 unsigned long Nb_sent_post = 0;
@@ -330,56 +289,16 @@ char token_post[MAX_BUFFER];
 char memo_token_post[MAX_BUFFER];
 int lora_rssi=0;
 unsigned int nb_boot_linky=0;
-unsigned int nb_decode_failed=0;
 int httpCode=0;
 char buffer[64]; 
 long lastReconnectAttempt = 0;
+unsigned long SINSTS=0;
 
 String info_config = "";
-
-struct teleinfo_s {
-  String _ADSC = "";  // Adresse Compteur
-  String VTIC = "";    
-  String NGTF="";
-  String LTARF="";  // Libelle tarif
-  unsigned long EAST=0; // Energie active soutiree totale
-  unsigned long EAIT=0; // Energie active injectee
-  unsigned int IRMS1=0; // Courant efficace, phase 1
-  unsigned int IRMS2=0; // Courant efficace, phase 2
-  unsigned int IRMS3=0; // Courant efficace, phase 3
-  unsigned int URMS1=0; // Tension efficace, phase 1
-  unsigned int URMS2=0; // Tension efficace, phase 2
-  unsigned int URMS3=0; // Tension efficace, phase 3
-  unsigned int PREF=0;
-  unsigned int PCOUP=0; // Puissance coupure
-  unsigned int SINSTS=0; // Puissance apparente
-  unsigned int SINSTSmin=0;
-  unsigned int SINSTSmax=0;
-  unsigned int SINSTS1=0; // Puissance apparente phase 1
-  unsigned int SINSTS2=0; // Puissance apparente phase 2
-  unsigned int SINSTS3=0; // Puissance apparente phase 3
-  unsigned int SINSTI=0; // Puissance apparente injectee
-  String STGE=""; // Registre de Statuts
-  String MSG1="";
-  String NTARF=""; // Index tarifaire en cours
-  String NJOURF=""; //Jour en cours
-  String NJOURF1=""; // Prochain jour
-  unsigned long EASF01=0;
-  unsigned long EASF02=0;
-  unsigned long EASF03=0;
-  unsigned long EASD01=0;
-  unsigned long EASD02=0;
-  unsigned long EASD03=0;
-  unsigned long ERQ1=0; // Energie reactive Q1 totale
-  unsigned long ERQ2=0; // Energie reactive Q2 totale
-  unsigned long ERQ3=0; // Energie reactive Q3 totale
-  unsigned long ERQ4=0; // Energie reactive Q4 totale
-} teleinfo; 
+String Etiquette, Valeur;
+uint8_t buf[RH_RF95_MAX_MESSAGE_LEN];
 
 DynamicJsonDocument jsonDocModule(1024);
-
-
-uint8_t buf[RH_RF95_MAX_MESSAGE_LEN];
 SSD1306Wire display(OLED_ADDR, OLED_SDA, OLED_SCL);
 AsyncWebServer server(80);
 WiFiClient client;
@@ -570,20 +489,15 @@ void draw_display() {
   // draw first separator --------------
   display.drawLine(0, 12, 128, 12);
   display.setTextAlignment(TEXT_ALIGN_CENTER);
-  display.drawString(64, 20, String(teleinfo.SINSTS) + " VA");
+  display.drawString(64, 20, String(SINSTS) + " VA");
   display.drawString(64, 37, String(Nb_rcv));
 
   if (mqttconnected) {
-    display.drawXbm(8, 15, 20, 20, mqtt_tiny);
-    //display.drawString(2, 15, String(Nb_rcv) + " / " + String(Nb_sent_mqtt));
-    display.drawString(2, 37, String(Nb_sent_mqtt));
+    display.drawXbm(8, 20, 20, 20, mqtt_tiny);
   }
 
   if (postactive) {
-    display.setTextAlignment(TEXT_ALIGN_RIGHT);
-    display.drawXbm(105, 15, 20, 19, post_tiny);
-    //display.drawString(2, 15, String(Nb_rcv) + " / " + String(Nb_sent_mqtt));
-    display.drawString(128, 37, String(Nb_sent_post));
+    display.drawXbm(105, 20, 20, 19, post_tiny);
   }
 
   // draw second separator --------------
@@ -631,296 +545,76 @@ boolean reconnect_mqtt() {
   return false;
 }
 
-// ---------------------------------------------------- traduction_etiquette
-String traduction_etiquette(int etiq, String valeur)
-{
-String rc;
-
-  Serial.print("traduction etiquette:");
-  Serial.print(etiq);
-  Serial.print("->");
-
-  switch (etiq) {
-    case ETIQU_ADSC :
-      teleinfo._ADSC = Valeur;
-      rc = "ADSC";
-      break;
-
-    case ETIQU_VTIC :
-      teleinfo.VTIC = Valeur;
-      rc = "VTIC";
-      break;
-
-    case ETIQU_NGTF :
-      teleinfo.NGTF = Valeur;
-      rc = "NGTF";
-      break;
-
-    case ETIQU_LTARF :
-      teleinfo.LTARF = Valeur;
-      rc = "LTARF";
-      break;
-
-    case ETIQU_EAST:
-      teleinfo.EAST = Valeur.toDouble();
-      rc = "EAST";
-      break;
-
-    case ETIQU_IRMS1:
-      teleinfo.IRMS1 = Valeur.toInt();
-      rc = "IRMS1";
-      break;
-
-    case ETIQU_IRMS2:
-      teleinfo.IRMS2 = Valeur.toInt();
-      rc = "IRMS2";
-      break;
-
-    case ETIQU_IRMS3:
-      teleinfo.IRMS3 = Valeur.toInt();
-      rc = "IRMS3";
-      break;
-
-    case ETIQU_URMS1:
-      teleinfo.URMS1 = Valeur.toInt();
-      rc = "URMS1";
-      break;
-
-    case ETIQU_URMS2:
-      teleinfo.URMS2 = Valeur.toInt();
-      rc = "URMS2";
-      break;
-
-    case ETIQU_URMS3:
-      teleinfo.URMS3 = Valeur.toInt();
-      rc = "URMS3";
-      break;
-
-    case ETIQU_PREF:
-      teleinfo.PREF = Valeur.toInt();
-      rc = "PREF";
-      break;
-
-    case ETIQU_PCOUP:
-      teleinfo.PCOUP = Valeur.toInt();
-      rc = "PCOUP";
-      break;
-
-    case ETIQU_SINSTS:
-      teleinfo.SINSTS = Valeur.toInt();
-      rc = "SINSTS";
-      break;
-
-    case ETIQU_SINSTSmin:
-      teleinfo.SINSTSmin = Valeur.toInt();
-      rc = "SINSTSmin";
-      break;
-
-    case ETIQU_SINSTSmax:
-      teleinfo.SINSTSmax = Valeur.toInt();
-      rc = "SINSTSmax";
-      break;
-
-    case ETIQU_SINSTS1:
-      teleinfo.SINSTS1 = Valeur.toInt();
-      rc = "SINSTS1";
-      break;
-
-    case ETIQU_SINSTS2:
-      teleinfo.SINSTS2 = Valeur.toInt();
-      rc = "SINSTS2";
-      break;
-
-    case ETIQU_SINSTS3:
-      teleinfo.SINSTS3 = Valeur.toInt();
-      rc = "SINSTS3";
-      break;
-
-    case ETIQU_STGE:
-      teleinfo.STGE = Valeur;
-      rc = "STGE";
-      break;
-
-    case ETIQU_MSG1:
-      teleinfo.MSG1 = Valeur;
-      rc = "MSG1";
-      break;
-
-    case ETIQU_NTARF:
-      teleinfo.NTARF = Valeur;
-      rc = "NTARF";
-      break;
-
-    case ETIQU_NJOURF:
-      teleinfo.NJOURF = Valeur;
-      rc = "NJOURF";
-      break;
-
-    case ETIQU_NJOURF1:
-      teleinfo.NJOURF1 = Valeur;
-      rc = "NJOURF1";
-      break;
-
-    case ETIQU_EAIT:
-      teleinfo.EAIT = Valeur.toDouble();
-      rc = "EAIT";
-      break;
-
-    case ETIQU_SINSTI:
-      teleinfo.SINSTI = Valeur.toInt();
-      rc = "SINSTSI";
-      break;
-
-    case ETIQU_EASF01:
-      teleinfo.EASF01 = Valeur.toDouble();
-      rc = "EASF01";
-      break;
-
-    case ETIQU_EASF02:
-      teleinfo.EASF02 = Valeur.toDouble();
-      rc = "EASF02";
-      break;
-
-    case ETIQU_EASF03:
-      teleinfo.EASF03 = Valeur.toDouble();
-      rc = "EASF03";
-      break;
-
-    case ETIQU_EASD01:
-      teleinfo.EASD01 = Valeur.toDouble();
-      rc = "EASD01";
-      break;
-
-    case ETIQU_EASD02:
-      teleinfo.EASD02 = Valeur.toDouble();
-      rc = "EASD02";
-      break;
-
-    case ETIQU_EASD03:
-      teleinfo.EASD03 = Valeur.toDouble();
-      rc = "EASD03";
-      break;
-
-    case ETIQU_ERQ1:
-      teleinfo.ERQ1 = Valeur.toDouble();
-      rc = "ERQ1";
-      break;
-
-    case ETIQU_ERQ2:
-      teleinfo.ERQ2 = Valeur.toDouble();
-      rc = "ERQ2";
-      break;
-
-    case ETIQU_ERQ3:
-      teleinfo.ERQ3 = Valeur.toDouble();
-      rc = "ERQ3";
-      break;
-
-    case ETIQU_STEP:
-      rc = "STEP";
-      break;
-
-    case ETIQU_BOOT:
-      rc = "BOOT";
-      break;
-
-    default :
-      rc = String(etiq);
-      break;
-  }
-
-  Serial.println(rc);
-
-  return rc;
-}
-
 // ---------------------------------------------------- traitement_data
-void traitement_data(int origine, String data)
+void traitement_data(String origine, String data)
 {
 String mqtt_buffer, url;
-int index=1;
-int etiqu;
-boolean flag_first = true;
+int index;
   
   Serial.print(F("traitement_data:"));
   Serial.println(data);
 
-  while (index > 0) {  
+  index = data.indexOf(";");
+  if (index > 0) {
+    // Recherche etiquette ---------
+    Etiquette = data.substring(0, index);
+    Serial.print(Etiquette);
+    Serial.print(F("->"));
 
+    // Recherche valeur -------------
+    data = data.substring(index+1);
     index = data.indexOf(";");
     if (index > 0) {
-      // Recherche etiquette ---------
-      etiqu = data.substring(0, index).toInt();
-      Serial.print(etiqu);
-      Serial.print(F("->"));
+      Valeur = data.substring(0, index);
+      Serial.println(Valeur);
 
-      // Recherche valeur -------------
-      data = data.substring(index+1);
-      index = data.indexOf(";");
-      if (index > 0) {
-        Valeur = data.substring(0, index);
+      if (Etiquette == "SINSTS") {
+        SINSTS = Valeur.toInt();
+      }
+
+      // Verif boot linky ----
+      if (Etiquette == "VERSION") {
+        nb_boot_linky++;
+        Version_Linky = Valeur;
+      }
+
+      // MQTT send --------------       
+      if (mqttactive == true && mqttconnected == true) {
+        mqtt_buffer = token_mqtt + String("/") + origine + String("/") + Etiquette;
+        Serial.print(F("Send mqtt:"));
+        Serial.print(mqtt_buffer);
+        Serial.print("/");
         Serial.println(Valeur);
 
-        data = data.substring(index+1);
-        index = data.indexOf(";");
-
-        Etiquette = traduction_etiquette(etiqu, Valeur);
-
-        // Verif boot linky ----
-        if (Etiquette == "BOOT") {
-          nb_boot_linky++;
-          Version_Linky = Valeur;
-        }
-        // Recup Step ----
-        if (Etiquette == "STEP") {
-          Step = Valeur;
-        }
-
-        // MQTT send --------------       
-        if (mqttactive == true && mqttconnected == true) {
-          mqtt_buffer = token_mqtt + String("/") + Etiquette;
-          Serial.print(F("Send mqtt:"));
-          Serial.print(mqtt_buffer);
-          Serial.print("/");
-          Serial.println(Valeur);
-
-          client_mqtt.publish(mqtt_buffer.c_str(), Valeur.c_str());
-          Nb_sent_mqtt++;
-        }
-
-        // POST init ----------
-        if (postactive == true) {
-          if (flag_first == true) {
-            flag_first = false;
-            url = F("/maj_post.php?token=");
-            url += token_post;
-          }
-          url += F("&");
-          url += Etiquette;
-          url += F("=");
-          url += Valeur;
-        }
+        client_mqtt.publish(mqtt_buffer.c_str(), Valeur.c_str());
+        Nb_sent_mqtt++;
       }
-    }
-	
-    // POST send ----------
-    if (postactive == true) {
-      Serial.print(F("Send post:"));
-      Serial.println(url);
 
-      HttpClient http_client = HttpClient(client, url_post, 80);
-      http_client.get(url);
-      httpCode = http_client.responseStatusCode();
+      // POST init ----------
+      if (postactive == true) {
+        url = F("/maj_post.php?token=");
+        url += token_post;
+        url += F("&");
+        url += Etiquette;
+        url += F("=");
+        url += Valeur;
 
-      if(httpCode > 0) {
-        Serial.print(F("Retour http get: "));
-        Nb_sent_post++;
+        Serial.print(F("Send post:"));
+        Serial.println(url);
+
+        HttpClient http_client = HttpClient(client, url_post, 80);
+        http_client.get(url);
+        httpCode = http_client.responseStatusCode();
+        if(httpCode > 0) {
+          Serial.print(F("Retour http get: "));
+          Nb_sent_post++;
+        }
+        else {
+          Serial.print(F("Erreur http get: "));
+          info_config = "Erreur http get:" + httpCode;
+        }
+        Serial.println(httpCode);
       }
-      else {
-        Serial.print(F("Erreur http get: "));
-        info_config = "Erreur http get:" + httpCode;
-      }
-      Serial.println(httpCode);
     }
     lastTime_display = millis();
   } 
@@ -929,8 +623,7 @@ boolean flag_first = true;
 // ---------------------------------------------------- onReceive
 void onReceive(int packetSize) {
 String read_buffer;
-int origine;
-int destinataire;
+String origine;
 int index;
  
     
@@ -944,31 +637,19 @@ int index;
     // Test entête présente -----------
     if (read_buffer.charAt(0) == ENTETE) {
       index = 0;
-      // Recherche origine ----------------
+      // Lecture origine ----------------
       read_buffer = read_buffer.substring(index+1);
       index = read_buffer.indexOf(";");
       if (index > 0) {
-        origine = read_buffer.substring(0, index).toInt();
+        origine = read_buffer.substring(0, index);
         Serial.print("Origine:");
         Serial.println(origine);
 
-        // Recherche destinataire ----------------
-        read_buffer = read_buffer.substring(index+1);
-        index = read_buffer.indexOf(";");
-        if (index > 0) {
-          destinataire = read_buffer.substring(0, index).toInt();
-          Serial.print("Dest:");
-          Serial.println(destinataire);
-
-          if (destinataire == GATEWAY_ADDRESS) { // est-ce pour moi ?
-            Nb_rcv++;
-            read_buffer = read_buffer.substring(index+1);
-            //Serial.println(read_buffer);    
-            // Decode données -----------------
-            read_buffer = xxtea.decrypt(read_buffer);
-            if (read_buffer != "-FAIL-") traitement_data(origine, read_buffer);
-              else nb_decode_failed++;
-          } // destinataire
+        if (origine != "") {
+          Nb_rcv++;
+          read_buffer = read_buffer.substring(index+1);
+          //Serial.println(read_buffer);    
+          traitement_data(origine, read_buffer);
         }
       }
     } // read_buffer
@@ -1007,14 +688,19 @@ String strJson = "{\n";
   strJson += lora_rssi;
   strJson += F("\",\n");
 
+   // Etiquette ---------------------
+  strJson += F("\"Etiquette\": \"");
+  strJson += Etiquette;
+  strJson += F("\",\n");
+
+   // Valeur ---------------------
+  strJson += F("\"Valeur\": \"");
+  strJson += Valeur;
+  strJson += F("\",\n");
+
   // nb_rcv ---------------------
   strJson += F("\"nb_rcv\": \"");
   strJson += Nb_rcv;
-  strJson += F("\",\n");
-
-  // nb_decode_failed ---------------------
-  strJson += F("\"nb_decode_failed\": \"");
-  strJson += nb_decode_failed;
   strJson += F("\",\n");
     
   // nb_sent_mqtt ---------------------
@@ -1027,16 +713,6 @@ String strJson = "{\n";
   strJson += Nb_sent_post;
   strJson += F("\",\n");
 
-  // Etiquette ---------------------
-  strJson += F("\"etiquette\": \"");
-  strJson += Etiquette;
-  strJson += F("\",\n");
-
-  // Step ---------------------
-  strJson += F("\"step\": \"");
-  strJson += Step;
-  strJson += F("\",\n");
-
   // httpCode ---------------------
   strJson += F("\"httpCode\": \"");
   strJson += httpCode;
@@ -1045,198 +721,6 @@ String strJson = "{\n";
   // info_config ---------------------
   strJson += F("\"info_config\": \"");
   strJson += info_config;
-  strJson += F("\"\n");
-
-  strJson += F("}");
-
-  request->send(200, "text/json", strJson);
-}
-
-//----------------------------------------------------------------------- page_config_json
-void page_teleinfo_json(AsyncWebServerRequest *request)
-{
-String strJson = "{\n";
-
-  Serial.println(F("Page teleinfo.json"));
-  
-  // ADSC ---------------------
-  strJson += F("\"ADSC\": \"");
-  strJson += teleinfo._ADSC;
-  strJson += F("\",\n");
-
-  // VTIC ---------------------
-  strJson += F("\"VTIC\": \"");
-  strJson += teleinfo.VTIC;
-  strJson += F("\",\n");
-
-  // NGTF ---------------------
-  strJson += F("\"NGTF\": \"");
-  strJson += teleinfo.NGTF;
-  strJson += F("\",\n");
-
-  // LTARF ---------------------
-  strJson += F("\"LTARF\": \"");
-  strJson += teleinfo.LTARF;
-  strJson += F("\",\n");
-
-  // EAST ---------------------
-  strJson += F("\"EAST\": \"");
-  strJson += teleinfo.EAST;
-  strJson += F("\",\n");
-
-  // EAIT ---------------------
-  strJson += F("\"EAIT\": \"");
-  strJson += teleinfo.EAIT;
-  strJson += F("\",\n");
-
-  // IRMS1 ---------------------
-  strJson += F("\"IRMS1\": \"");
-  strJson += teleinfo.IRMS1;
-  strJson += F("\",\n");
-
-  // IRMS2 ---------------------
-  strJson += F("\"IRMS2\": \"");
-  strJson += teleinfo.IRMS2;
-  strJson += F("\",\n");
-
-  // IRMS3 ---------------------
-  strJson += F("\"IRMS3\": \"");
-  strJson += teleinfo.IRMS3;
-  strJson += F("\",\n");
-
-  // URMS1 ---------------------
-  strJson += F("\"URMS1\": \"");
-  strJson += teleinfo.URMS1;
-  strJson += F("\",\n");
-
-  // URMS2 ---------------------
-  strJson += F("\"URMS2\": \"");
-  strJson += teleinfo.URMS2;
-  strJson += F("\",\n");
-
-  // URMS3 ---------------------
-  strJson += F("\"URMS3\": \"");
-  strJson += teleinfo.URMS3;
-  strJson += F("\",\n");
-    
-  // PREF ---------------------
-  strJson += F("\"PREF\": \"");
-  strJson += teleinfo.PREF;
-  strJson += F("\",\n");
-
-  // PCOUP ---------------------
-  strJson += F("\"PCOUP\": \"");
-  strJson += teleinfo.PCOUP;
-  strJson += F("\",\n");
-
-  // SINSTS ---------------------
-  strJson += F("\"SINSTS\": \"");
-  strJson += teleinfo.SINSTS;
-  strJson += F("\",\n");
-
-  // SINSTSmin ---------------------
-  strJson += F("\"SINSTSmin\": \"");
-  strJson += teleinfo.SINSTSmin;
-  strJson += F("\",\n");
-
-  // SINSTSmax ---------------------
-  strJson += F("\"SINSTSmax\": \"");
-  strJson += teleinfo.SINSTSmax;
-  strJson += F("\",\n");
-
-  // SINSTS1 ---------------------
-  strJson += F("\"SINSTS1\": \"");
-  strJson += teleinfo.SINSTS1;
-  strJson += F("\",\n");
-
-  // SINSTS2 ---------------------
-  strJson += F("\"SINSTS2\": \"");
-  strJson += teleinfo.SINSTS2;
-  strJson += F("\",\n");
-
-  // SINSTS3 ---------------------
-  strJson += F("\"SINSTS3\": \"");
-  strJson += teleinfo.SINSTS3;
-  strJson += F("\",\n");
-
-  // SINSTI ---------------------
-  strJson += F("\"SINSTI\": \"");
-  strJson += teleinfo.SINSTI;
-  strJson += F("\",\n");
-
-  // STGE ---------------------
-  strJson += F("\"STGE\": \"");
-  strJson += teleinfo.STGE;
-  strJson += F("\",\n");
-
-  // MSG1 ---------------------
-  strJson += F("\"MSG1\": \"");
-  strJson += teleinfo.MSG1;
-  strJson += F("\",\n");
-
-  // NTARF ---------------------
-  strJson += F("\"NTARF\": \"");
-  strJson += teleinfo.NTARF;
-  strJson += F("\",\n");
-
-  // NJOURF ---------------------
-  strJson += F("\"NJOURF\": \"");
-  strJson += teleinfo.NJOURF;
-  strJson += F("\",\n");
-
-  // NJOURF1 ---------------------
-  strJson += F("\"NJOURF1\": \"");
-  strJson += teleinfo.NJOURF1;
-  strJson += F("\",\n");
-
-  // EASF01 ---------------------
-  strJson += F("\"EASF01\": \"");
-  strJson += teleinfo.EASF01;
-  strJson += F("\",\n");
-
-  // EASF02 ---------------------
-  strJson += F("\"EASF02\": \"");
-  strJson += teleinfo.EASF02;
-  strJson += F("\",\n");
-
-  // EASF03 ---------------------
-  strJson += F("\"EASF03\": \"");
-  strJson += teleinfo.EASF03;
-  strJson += F("\",\n");
-
-  // EASD01 ---------------------
-  strJson += F("\"EASD01\": \"");
-  strJson += teleinfo.EASD01;
-  strJson += F("\",\n");
-
-  // EASD02 ---------------------
-  strJson += F("\"EASD02\": \"");
-  strJson += teleinfo.EASD02;
-  strJson += F("\",\n");
-
-  // EASD03 ---------------------
-  strJson += F("\"EASD03\": \"");
-  strJson += teleinfo.EASD03;
-  strJson += F("\",\n");
-
-  // ERQ1 ---------------------
-  strJson += F("\"ERQ1\": \"");
-  strJson += teleinfo.ERQ1;
-  strJson += F("\",\n");
-
-  // ERQ2 ---------------------
-  strJson += F("\"ERQ2\": \"");
-  strJson += teleinfo.ERQ2;
-  strJson += F("\",\n");
-
-  // ERQ3 ---------------------
-  strJson += F("\"ERQ3\": \"");
-  strJson += teleinfo.ERQ3;
-  strJson += F("\",\n");
-  
-  // ERQ4 ---------------------
-  strJson += F("\"ERQ4\": \"");
-  strJson += teleinfo.ERQ4;
   strJson += F("\"\n");
 
   strJson += F("}");
@@ -1413,11 +897,6 @@ void loadPages()
     page_config_json(request);
   });
 
-  server.on("/teleinfo.json", HTTP_GET, [](AsyncWebServerRequest *request)
-  {
-    page_teleinfo_json(request);
-  });
-
   server.on("/config.htm", HTTP_POST, [](AsyncWebServerRequest *request)
   {
     page_config_htm(request);
@@ -1481,8 +960,6 @@ void setup()
   Serial.println(WiFi.localIP());
 
   //----------------------------------------------------LORA
-  xxtea.setKey(CRYPT_PASS);
-
   LoRa.setPins(SX1278_CS, SX1278_RST, SX1278_IRQ);
   
   Serial.print(F("Init RF95: "));
