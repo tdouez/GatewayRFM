@@ -37,6 +37,7 @@
 // 2021/12/01 - FB V1.05 - Not blocking Mqtt reconnect & change icons display
 // 2021/12/08 - FB V2.00 - protocole update
 // 2021/12/27 - FB V2.01 - change character size and bitmap
+// 2022/01/09 - FB V2.02 - screen bug
 //--------------------------------------------------------------------
 #include <Arduino.h>
 #include <WiFiManager.h>
@@ -53,7 +54,7 @@
 #include <SPIFFS.h>
 
 
-#define VERSION   "v2.0.1"
+#define VERSION   "v2.0.2"
 
 #define MY_BAUD_RATE 115200
 
@@ -514,6 +515,8 @@ void draw_display() {
 // ---------------------------------------------------- reconnect_mqtt
 boolean reconnect_mqtt() {
   int nb_cnx = 0;
+
+  info_config = "";
 
   // Attempt to connect
   if (user_mqtt[0] != 0) { // si user renseigné
