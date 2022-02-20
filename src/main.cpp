@@ -38,6 +38,7 @@
 // 2021/12/08 - FB V2.00 - protocole update
 // 2021/12/27 - FB V2.01 - change character size and bitmap
 // 2022/01/09 - FB V2.02 - screen bug
+// 2022/02/20 - FB V2.03 - screen bug about PAPP & mqtt reconnect update
 //--------------------------------------------------------------------
 #include <Arduino.h>
 #include <WiFiManager.h>
@@ -54,7 +55,7 @@
 #include <SPIFFS.h>
 
 
-#define VERSION   "v2.0.2"
+#define VERSION   "v2.0.3"
 
 #define MY_BAUD_RATE 115200
 
@@ -291,6 +292,7 @@ int httpCode=0;
 char buffer[64]; 
 long lastReconnectAttempt = 0;
 unsigned long SINSTS=0;
+int nb_cnx_mqtt = 0;
 
 String info_config = "";
 String Etiquette, Valeur;
@@ -514,37 +516,39 @@ void draw_display() {
 
 // ---------------------------------------------------- reconnect_mqtt
 boolean reconnect_mqtt() {
-  int nb_cnx = 0;
-
   info_config = "";
 
   // Attempt to connect
   if (user_mqtt[0] != 0) { // si user renseigné
     if (client_mqtt.connect("FBGateway", user_mqtt, pwd_mqtt)) {
+      nb_cnx_mqtt=0;
       Serial.println("connected");
       mqttconnected = true;
       return client.connected();
     } 
     else {
-      nb_cnx++;
+      nb_cnx_mqtt++;
       Serial.print("failed, rc=");
       Serial.print(client_mqtt.state());
-      info_config = "Pb cnx mqtt:" + String(client_mqtt.state()) + " " + String(nb_cnx);
+      info_config = "Pb cnx mqtt:" + String(client_mqtt.state()) + " " + String(nb_cnx_mqtt);
       mqttconnected = false;
+      if (nb_cnx_mqtt > 5) ESP.restart();
     }
   }
   else {
     if (client_mqtt.connect("FBGateway")) {
+      nb_cnx_mqtt=0;
       Serial.println("connected");
       mqttconnected = true;
       return client.connected();
     } 
     else {
-      nb_cnx++;
+      nb_cnx_mqtt++;
       Serial.print("failed, rc=");
       Serial.print(client_mqtt.state());
-      info_config = "Pb cnx mqtt:" + String(client_mqtt.state()) + " " + String(nb_cnx);
+      info_config = "Pb cnx mqtt:" + String(client_mqtt.state()) + " " + String(nb_cnx_mqtt);
       mqttconnected = false;
+      if (nb_cnx_mqtt > 5) ESP.restart();
     }
   }
   return false;
@@ -574,6 +578,9 @@ int index;
       Serial.println(Valeur);
 
       if (Etiquette == "SINSTS") {
+        SINSTS = Valeur.toInt();
+      }
+      if (Etiquette == "PAPP") {
         SINSTS = Valeur.toInt();
       }
 
